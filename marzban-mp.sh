@@ -2,27 +2,27 @@
 set -e
 
 INSTALL_DIR="/opt"
-APP_NAME="${APP_NAME:-marzban}"  # Default to marzban
+APP_NAME="${APP_NAME:-marzban}"
 APP_DIR="$INSTALL_DIR/$APP_NAME"
 DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 LAST_XRAY_CORES=10
 
-# Detect APP_NAME from script name (e.g., if called as marzban2, set APP_NAME=marzban2)
 script_name=$(basename "$0")
-if [[ "$script_name" != "marzban" && "$script_name" =~ ^marzban[0-9a-zA-Z]+$ ]]; then
-    APP_NAME="$script_name"
-    APP_DIR="$INSTALL_DIR/$APP_NAME"
-    DATA_DIR="/var/lib/$APP_NAME"
-    COMPOSE_FILE="$APP_DIR/docker-compose.yml"
-    ENV_FILE="$APP_DIR/.env"
+if [[ "$script_name" != "marzban" ]] && [[ "$script_name" != "marzban.sh" ]] && [[ "$script_name" != "marzban-mp.sh" ]]; then
+    if [[ -f "$INSTALL_DIR/$script_name/.env" ]]; then
+        APP_NAME="$script_name"
+        APP_DIR="$INSTALL_DIR/$APP_NAME"
+        DATA_DIR="/var/lib/$APP_NAME"
+        COMPOSE_FILE="$APP_DIR/docker-compose.yml"
+        ENV_FILE="$APP_DIR/.env"
+    fi
 fi
 
 colorized_echo() {
     local color=$1
     local text=$2
-    
     case $color in
         "red")
         printf "\e[91m${text}\e[0m\n";;
@@ -50,7 +50,6 @@ check_running_as_root() {
 }
 
 detect_os() {
-    # Detect the operating system
     if [ -f /etc/lsb-release ]; then
         OS=$(lsb_release -si)
     elif [ -f /etc/os-release ]; then
@@ -65,7 +64,6 @@ detect_os() {
     fi
 }
 
-
 detect_and_update_package_manager() {
     colorized_echo blue "Updating package manager"
     if [[ "$OS" == "Ubuntu"* ]] || [[ "$OS" == "Debian"* ]]; then
@@ -75,10 +73,10 @@ detect_and_update_package_manager() {
         PKG_MANAGER="yum"
         $PKG_MANAGER update -y
         $PKG_MANAGER install -y epel-release
-    elif [ "$OS" == "Fedora"* ]; then
+    elif [[ "$OS" == "Fedora"* ]]; then
         PKG_MANAGER="dnf"
         $PKG_MANAGER update
-    elif [ "$OS" == "Arch" ]; then
+    elif [[ "$OS" == "Arch" ]]; then
         PKG_MANAGER="pacman"
         $PKG_MANAGER -Sy
     elif [[ "$OS" == "openSUSE"* ]]; then
@@ -91,19 +89,18 @@ detect_and_update_package_manager() {
 }
 
 install_package () {
-    if [ -z $PKG_MANAGER ]; then
+    if [ -z "$PKG_MANAGER" ]; then
         detect_and_update_package_manager
     fi
-    
     PACKAGE=$1
     colorized_echo blue "Installing $PACKAGE"
     if [[ "$OS" == "Ubuntu"* ]] || [[ "$OS" == "Debian"* ]]; then
         $PKG_MANAGER -y install "$PACKAGE"
     elif [[ "$OS" == "CentOS"* ]] || [[ "$OS" == "AlmaLinux"* ]]; then
         $PKG_MANAGER install -y "$PACKAGE"
-    elif [ "$OS" == "Fedora"* ]; then
+    elif [[ "$OS" == "Fedora"* ]]; then
         $PKG_MANAGER install -y "$PACKAGE"
-    elif [ "$OS" == "Arch" ]; then
+    elif [[ "$OS" == "Arch" ]]; then
         $PKG_MANAGER -S --noconfirm "$PACKAGE"
     else
         colorized_echo red "Unsupported operating system"
@@ -112,14 +109,12 @@ install_package () {
 }
 
 install_docker() {
-    # Install Docker and Docker Compose using the official installation script
     colorized_echo blue "Installing Docker"
     curl -fsSL https://get.docker.com | sh
     colorized_echo green "Docker installed successfully"
 }
 
 detect_compose() {
-    # Check if docker compose command exists
     if docker compose version >/dev/null 2>&1; then
         COMPOSE='docker compose'
     elif docker-compose version >/dev/null 2>&1; then
@@ -131,21 +126,19 @@ detect_compose() {
 }
 
 install_marzban_script() {
-    FETCH_REPO="Gozargah/Marzban-scripts"
-    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/marzban.sh"
-    colorized_echo blue "Installing marzban script"
-    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/marzban
-    colorized_echo green "marzban script installed successfully"
+    local target_app_name="${1:-$APP_NAME}"
+    local script_path="/usr/local/bin/$target_app_name"
     
-    # Create symlink for custom APP_NAME if not default and doesn't exist
-    if [ "$APP_NAME" != "marzban" ] && [ ! -e "/usr/local/bin/$APP_NAME" ]; then
-        ln -sf /usr/local/bin/marzban /usr/local/bin/$APP_NAME
-        colorized_echo green "Symlink created: /usr/local/bin/$APP_NAME"
-    fi
+    colorized_echo blue "Installing $target_app_name script"
+    
+    cp "$0" "$script_path"
+    chmod 755 "$script_path"
+    
+    colorized_echo green "$target_app_name script installed successfully at $script_path"
 }
 
 is_marzban_installed() {
-    if [ -d $APP_DIR ]; then
+    if [ -d "$APP_DIR" ]; then
         return 0
     else
         return 1
@@ -213,12 +206,12 @@ identify_the_operating_system_and_architecture() {
 
 send_backup_to_telegram() {
     if [ -f "$ENV_FILE" ]; then
-        while IFS='=' read -r key value; do
+        while IFS='=' read -r key value || [[ -n "$key" ]]; do
             if [[ -z "$key" || "$key" =~ ^# ]]; then
                 continue
             fi
             key=$(echo "$key" | xargs)
-            value=$(echo "$value" | xargs)
+            value=$(echo "$value" | sed 's/^"\(.*\)"$/\1/' | xargs)
             if [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
                 export "$key"="$value"
             else
@@ -246,21 +239,17 @@ send_backup_to_telegram() {
 
     local backup_size=$(du -m "$backup_path" | cut -f1)
     local split_dir="/tmp/marzban_backup_split"
-    local is_single_file=true
 
     mkdir -p "$split_dir"
 
     if [ "$backup_size" -gt 49 ]; then
         colorized_echo yellow "Backup is larger than 49MB. Splitting the archive..."
         split -b 49M "$backup_path" "$split_dir/part_"
-        is_single_file=false
     else
         cp "$backup_path" "$split_dir/part_aa"
     fi
 
-
     local backup_time=$(date "+%Y-%m-%d %H:%M:%S %Z")
-
 
     for part in "$split_dir"/*; do
         local part_name=$(basename "$part")
@@ -288,7 +277,6 @@ send_backup_error_to_telegram() {
     message+="Errors:\n\`${error_messages//_/\\_}\`\n"
     message+="Time: \`${error_time}\`"
 
-
     message=$(echo -e "$message" | sed 's/-/\\-/g;s/\./\\./g;s/_/\\_/g;s/(/\\(/g;s/)/\\)/g')
 
     local max_length=1000
@@ -296,14 +284,12 @@ send_backup_error_to_telegram() {
         message="${message:0:$((max_length - 50))}...\n\`[Message truncated]\`"
     fi
 
-
     curl -s -X POST "https://api.telegram.org/bot$BACKUP_TELEGRAM_BOT_KEY/sendMessage" \
         -d chat_id="$BACKUP_TELEGRAM_CHAT_ID" \
         -d parse_mode="MarkdownV2" \
         -d text="$message" >/dev/null 2>&1 && \
     colorized_echo green "Backup error notification sent to Telegram." || \
     colorized_echo red "Failed to send error notification to Telegram."
-
 
     if [ -f "$log_file" ]; then
         response=$(curl -s -w "%{http_code}" -o /tmp/tg_response.json \
@@ -324,10 +310,6 @@ send_backup_error_to_telegram() {
     fi
 }
 
-
-
-
-
 backup_service() {
     local telegram_bot_key=""
     local telegram_chat_id=""
@@ -335,7 +317,7 @@ backup_service() {
     local interval_hours=""
 
     colorized_echo blue "====================================="
-    colorized_echo blue "      Welcome to Backup Service      "
+    colorized_echo blue " Welcome to Backup Service "
     colorized_echo blue "====================================="
 
     if grep -q "BACKUP_SERVICE_ENABLED=true" "$ENV_FILE"; then
@@ -407,18 +389,15 @@ backup_service() {
     while true; do
         printf "Set up the backup interval in hours (1-24):\n"
         read interval_hours
-
         if ! [[ "$interval_hours" =~ ^[0-9]+$ ]]; then
             colorized_echo red "Invalid input. Please enter a valid number."
             continue
         fi
-
         if [[ "$interval_hours" -eq 24 ]]; then
             cron_schedule="0 0 * * *"
             colorized_echo green "Setting backup to run daily at midnight."
             break
         fi
-
         if [[ "$interval_hours" -ge 1 && "$interval_hours" -le 23 ]]; then
             cron_schedule="0 */$interval_hours * * *"
             colorized_echo green "Setting backup to run every $interval_hours hour(s)."
@@ -456,7 +435,6 @@ backup_service() {
     colorized_echo green "====================================="
 }
 
-
 add_cron_job() {
     local schedule="$1"
     local command="$2"
@@ -464,7 +442,7 @@ add_cron_job() {
 
     crontab -l 2>/dev/null > "$temp_cron" || true
     grep -v "$command" "$temp_cron" > "${temp_cron}.tmp" && mv "${temp_cron}.tmp" "$temp_cron"
-    echo "$schedule $command # marzban-backup-service" >> "$temp_cron"
+    echo "$schedule $command # $APP_NAME-backup-service" >> "$temp_cron"
     
     if crontab "$temp_cron"; then
         colorized_echo green "Cron job successfully added."
@@ -477,7 +455,6 @@ add_cron_job() {
 remove_backup_service() {
     colorized_echo red "in process..."
 
-
     sed -i '/^# Backup service configuration/d' "$ENV_FILE"
     sed -i '/BACKUP_SERVICE_ENABLED/d' "$ENV_FILE"
     sed -i '/BACKUP_TELEGRAM_BOT_KEY/d' "$ENV_FILE"
@@ -487,7 +464,7 @@ remove_backup_service() {
     local temp_cron=$(mktemp)
     crontab -l 2>/dev/null > "$temp_cron"
 
-    sed -i '/# marzban-backup-service/d' "$temp_cron"
+    sed -i "/$APP_NAME-backup-service/d" "$temp_cron"
 
     if crontab "$temp_cron"; then
         colorized_echo green "Backup service task removed from crontab."
@@ -502,13 +479,15 @@ remove_backup_service() {
 
 backup_command() {
     local backup_dir="$APP_DIR/backup"
-    local temp_dir="/tmp/marzban_backup"
+    local temp_dir="/tmp/${APP_NAME}_backup"
     local timestamp=$(date +"%Y%m%d%H%M%S")
     local backup_file="$backup_dir/backup_$timestamp.tar.gz"
     local error_messages=()
-    local log_file="/var/log/marzban_backup_error.log"
+    local log_file="/var/log/${APP_NAME}_backup_error.log"
     > "$log_file"
     echo "Backup Log - $(date)" > "$log_file"
+
+    detect_compose
 
     if ! command -v rsync >/dev/null 2>&1; then
         detect_os
@@ -520,12 +499,12 @@ backup_command() {
     mkdir -p "$temp_dir"
 
     if [ -f "$ENV_FILE" ]; then
-        while IFS='=' read -r key value; do
+        while IFS='=' read -r key value || [[ -n "$key" ]]; do
             if [[ -z "$key" || "$key" =~ ^# ]]; then
                 continue
             fi
             key=$(echo "$key" | xargs)
-            value=$(echo "$value" | xargs)
+            value=$(echo "$value" | sed 's/^"\(.*\)"$/\1/' | xargs)
             if [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
                 export "$key"="$value"
             else
@@ -543,19 +522,16 @@ backup_command() {
     local sqlite_file=""
     if grep -q "image: mariadb" "$COMPOSE_FILE"; then
         db_type="mariadb"
-        container_name=$(docker compose -f "$COMPOSE_FILE" ps -q mariadb || echo "mariadb")
-
+        container_name=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps -q mariadb 2>/dev/null || echo "${APP_NAME}-mariadb-1")
     elif grep -q "image: mysql" "$COMPOSE_FILE"; then
         db_type="mysql"
-        container_name=$(docker compose -f "$COMPOSE_FILE" ps -q mysql || echo "mysql")
-
-    elif grep -q "SQLALCHEMY_DATABASE_URL = .*sqlite" "$ENV_FILE"; then
+        container_name=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps -q mysql 2>/dev/null || echo "${APP_NAME}-mysql-1")
+    elif grep -q "SQLALCHEMY_DATABASE_URL.*sqlite" "$ENV_FILE"; then
         db_type="sqlite"
-        sqlite_file=$(grep -Po '(?<=SQLALCHEMY_DATABASE_URL = "sqlite:////).*"' "$ENV_FILE" | tr -d '"')
+        sqlite_file=$(grep -Po '(?<=SQLALCHEMY_DATABASE_URL.*sqlite:////).*' "$ENV_FILE" | tr -d '"' | head -1)
         if [[ ! "$sqlite_file" =~ ^/ ]]; then
             sqlite_file="/$sqlite_file"
         fi
-
     fi
 
     if [ -n "$db_type" ]; then
@@ -567,7 +543,7 @@ backup_command() {
                 fi
                 ;;
             mysql)
-                if ! docker exec "$container_name" mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" marzban --events --triggers  > "$temp_dir/db_backup.sql" 2>>"$log_file"; then
+                if ! docker exec "$container_name" mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" marzban --events --triggers > "$temp_dir/db_backup.sql" 2>>"$log_file"; then
                     error_messages+=("MySQL dump failed.")
                 fi
                 ;;
@@ -585,7 +561,7 @@ backup_command() {
 
     cp "$APP_DIR/.env" "$temp_dir/" 2>>"$log_file"
     cp "$APP_DIR/docker-compose.yml" "$temp_dir/" 2>>"$log_file"
-    rsync -av --exclude 'xray-core' --exclude 'mysql' "$DATA_DIR/" "$temp_dir/marzban_data/" >>"$log_file" 2>&1
+    rsync -av --exclude 'xray-core' --exclude 'mysql' "$DATA_DIR/" "$temp_dir/${APP_NAME}_data/" >>"$log_file" 2>&1
 
     if ! tar -czf "$backup_file" -C "$temp_dir" .; then
         error_messages+=("Failed to create backup archive.")
@@ -602,15 +578,12 @@ backup_command() {
     send_backup_to_telegram "$backup_file"
 }
 
-
-
 get_xray_core() {
     identify_the_operating_system_and_architecture
     clear
 
     validate_version() {
         local version="$1"
-        
         local response=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/tags/$version")
         if echo "$response" | grep -q '"message": "Not Found"'; then
             echo "invalid"
@@ -622,7 +595,7 @@ get_xray_core() {
     print_menu() {
         clear
         echo -e "\033[1;32m==============================\033[0m"
-        echo -e "\033[1;32m      Xray-core Installer     \033[0m"
+        echo -e "\033[1;32m Xray-core Installer \033[0m"
         echo -e "\033[1;32m==============================\033[0m"
         echo -e "\033[1;33mAvailable Xray-core versions:\033[0m"
         for ((i=0; i<${#versions[@]}; i++)); do
@@ -635,13 +608,11 @@ get_xray_core() {
     }
 
     latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=$LAST_XRAY_CORES")
-
     versions=($(echo "$latest_releases" | grep -oP '"tag_name": "\K(.*?)(?=")'))
 
     while true; do
         print_menu
         read -p "Choose a version to install (1-${#versions[@]}), or press M to enter manually, Q to quit: " choice
-        
         if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [ "$choice" -le "${#versions[@]}" ]; then
             choice=$((choice - 1))
             selected_version=${versions[choice]}
@@ -667,7 +638,6 @@ get_xray_core() {
 
     echo -e "\033[1;32mSelected version $selected_version for installation.\033[0m"
 
-    # Check if the required packages are installed
     if ! command -v unzip >/dev/null 2>&1; then
         echo -e "\033[1;33mInstalling required packages...\033[0m"
         detect_os
@@ -679,8 +649,8 @@ get_xray_core() {
         install_package wget
     fi
 
-    mkdir -p $DATA_DIR/xray-core
-    cd $DATA_DIR/xray-core
+    mkdir -p "$DATA_DIR/xray-core"
+    cd "$DATA_DIR/xray-core"
 
     xray_filename="Xray-linux-$ARCH.zip"
     xray_download_url="https://github.com/XTLS/Xray-core/releases/download/${selected_version}/${xray_filename}"
@@ -693,29 +663,21 @@ get_xray_core() {
     rm "${xray_filename}"
 }
 
-# Function to update the Marzban Main core
 update_core_command() {
     check_running_as_root
     get_xray_core
-    # Change the Marzban core
-    xray_executable_path="XRAY_EXECUTABLE_PATH=\"$DATA_DIR/xray-core/xray\""
-    
-    echo "Changing the Marzban core..."
-    # Check if the XRAY_EXECUTABLE_PATH string already exists in the .env file
+    xray_executable_path="XRAY_EXECUTABLE_PATH=\"/var/lib/marzban/xray-core/xray\""
+    echo "Changing the $APP_NAME core..."
     if ! grep -q "^XRAY_EXECUTABLE_PATH=" "$ENV_FILE"; then
-        # If the string does not exist, add it
         echo "${xray_executable_path}" >> "$ENV_FILE"
     else
-        # Update the existing XRAY_EXECUTABLE_PATH line
         sed -i "s~^XRAY_EXECUTABLE_PATH=.*~${xray_executable_path}~" "$ENV_FILE"
     fi
-    
-    # Restart Marzban
-    colorized_echo red "Restarting Marzban..."
+    colorized_echo red "Restarting $APP_NAME..."
     if restart_command -n >/dev/null 2>&1; then
-        colorized_echo green "Marzban successfully restarted!"
+        colorized_echo green "$APP_NAME successfully restarted!"
     else
-        colorized_echo red "Marzban restart failed!"
+        colorized_echo red "$APP_NAME restart failed!"
     fi
     colorized_echo blue "Installation of Xray-core version $selected_version completed."
 }
@@ -725,7 +687,6 @@ install_marzban() {
     local database_type=$2
     local panel_port=$3
     local db_port=$4
-    # Fetch releases
     FILES_URL_PREFIX="https://raw.githubusercontent.com/Gozargah/Marzban/master"
     
     mkdir -p "$DATA_DIR"
@@ -735,7 +696,6 @@ install_marzban() {
     docker_file_path="$APP_DIR/docker-compose.yml"
     
     if [ "$database_type" == "mariadb" ]; then
-        # Generate docker-compose.yml with MariaDB content
         cat > "$docker_file_path" <<EOF
 services:
   $APP_NAME:
@@ -753,7 +713,6 @@ services:
   mariadb:
     image: mariadb:lts
     env_file: .env
-    network_mode: host
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD}
@@ -762,21 +721,20 @@ services:
       MYSQL_USER: \${MYSQL_USER}
       MYSQL_PASSWORD: \${MYSQL_PASSWORD}
     command:
-      - --bind-address=0.0.0.0                  # Restricts access to localhost for increased security
-      - --character_set_server=utf8mb4            # Sets UTF-8 character set for full Unicode support
-      - --collation_server=utf8mb4_unicode_ci     # Defines collation for Unicode
-      - --host-cache-size=0                       # Disables host cache to prevent DNS issues
-      - --innodb-open-files=1024                  # Sets the limit for InnoDB open files
-      - --innodb-buffer-pool-size=256M            # Allocates buffer pool size for InnoDB
-      - --binlog_expire_logs_seconds=1209600      # Sets binary log expiration to 14 days (2 weeks)
-      - --innodb-log-file-size=64M                # Sets InnoDB log file size to balance log retention and performance
-      - --innodb-log-files-in-group=2             # Uses two log files to balance recovery and disk I/O
-      - --innodb-doublewrite=0                    # Disables doublewrite buffer (reduces disk I/O; may increase data loss risk)
-      - --general_log=0                           # Disables general query log to reduce disk usage
-      - --slow_query_log=1                        # Enables slow query log for identifying performance issues
-      - --slow_query_log_file=/var/lib/mysql/slow.log # Logs slow queries for troubleshooting
-      - --long_query_time=2                       # Defines slow query threshold as 2 seconds
-      - --port=3306
+      - --bind-address=0.0.0.0
+      - --character_set_server=utf8mb4
+      - --collation_server=utf8mb4_unicode_ci
+      - --host-cache-size=0
+      - --innodb-open-files=1024
+      - --innodb-buffer-pool-size=256M
+      - --binlog_expire_logs_seconds=1209600
+      - --innodb-log-file-size=64M
+      - --innodb-log-files-in-group=2
+      - --innodb-doublewrite=0
+      - --general_log=0
+      - --slow_query_log=1
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+      - --long_query_time=2
     ports:
       - "$db_port:3306"
     volumes:
@@ -793,42 +751,27 @@ EOF
         colorized_echo red "Using MariaDB as database on port $db_port"
         echo "----------------------------"
         colorized_echo green "File generated at $APP_DIR/docker-compose.yml"
-
-        # Modify .env file
         colorized_echo blue "Fetching .env file"
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
-
-        # Comment out the SQLite line
         sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
-
-
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"$DATA_DIR/xray_config.json"~' "$APP_DIR/.env"
-
-
+        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
+        sed -i "s~^UVICORN_PORT = .*~UVICORN_PORT = $panel_port~" "$APP_DIR/.env"
         prompt_for_marzban_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
-        
-        echo "" >> "$ENV_FILE"
         echo "" >> "$ENV_FILE"
         echo "# Database configuration" >> "$ENV_FILE"
         echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$ENV_FILE"
         echo "MYSQL_DATABASE=marzban" >> "$ENV_FILE"
         echo "MYSQL_USER=marzban" >> "$ENV_FILE"
         echo "MYSQL_PASSWORD=$MYSQL_PASSWORD" >> "$ENV_FILE"
-        
         SQLALCHEMY_DATABASE_URL="mysql+pymysql://marzban:${MYSQL_PASSWORD}@127.0.0.1:${db_port}/marzban"
-        
         echo "" >> "$ENV_FILE"
         echo "# SQLAlchemy Database URL" >> "$ENV_FILE"
         echo "SQLALCHEMY_DATABASE_URL=\"$SQLALCHEMY_DATABASE_URL\"" >> "$ENV_FILE"
-
-        echo "UVICORN_PORT=$panel_port" >> "$ENV_FILE"
-        
         colorized_echo green "File saved in $APP_DIR/.env"
 
     elif [ "$database_type" == "mysql" ]; then
-        # Generate docker-compose.yml with MySQL content
         cat > "$docker_file_path" <<EOF
 services:
   $APP_NAME:
@@ -846,7 +789,6 @@ services:
   mysql:
     image: mysql:lts
     env_file: .env
-    network_mode: host
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD}
@@ -855,22 +797,21 @@ services:
       MYSQL_USER: \${MYSQL_USER}
       MYSQL_PASSWORD: \${MYSQL_PASSWORD}
     command:
-      - --mysqlx=OFF                             # Disables MySQL X Plugin to save resources if X Protocol isn't used
-      - --bind-address=0.0.0.0                  # Restricts access to localhost for increased security
-      - --character_set_server=utf8mb4            # Sets UTF-8 character set for full Unicode support
-      - --collation_server=utf8mb4_unicode_ci     # Defines collation for Unicode
-      - --log-bin=mysql-bin                       # Enables binary logging for point-in-time recovery
-      - --binlog_expire_logs_seconds=1209600      # Sets binary log expiration to 14 days
-      - --host-cache-size=0                       # Disables host cache to prevent DNS issues
-      - --innodb-open-files=1024                  # Sets the limit for InnoDB open files
-      - --innodb-buffer-pool-size=256M            # Allocates buffer pool size for InnoDB
-      - --innodb-log-file-size=64M                # Sets InnoDB log file size to balance log retention and performance
-      - --innodb-log-files-in-group=2             # Uses two log files to balance recovery and disk I/O
-      - --general_log=0                           # Disables general query log for lower disk usage
-      - --slow_query_log=1                        # Enables slow query log for performance analysis
-      - --slow_query_log_file=/var/lib/mysql/slow.log # Logs slow queries for troubleshooting
-      - --long_query_time=2                       # Defines slow query threshold as 2 seconds
-      - --port=3306
+      - --mysqlx=OFF
+      - --bind-address=0.0.0.0
+      - --character_set_server=utf8mb4
+      - --collation_server=utf8mb4_unicode_ci
+      - --log-bin=mysql-bin
+      - --binlog_expire_logs_seconds=1209600
+      - --host-cache-size=0
+      - --innodb-open-files=1024
+      - --innodb-buffer-pool-size=256M
+      - --innodb-log-file-size=64M
+      - --innodb-log-files-in-group=2
+      - --general_log=0
+      - --slow_query_log=1
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+      - --long_query_time=2
     ports:
       - "$db_port:3306"
     volumes:
@@ -881,44 +822,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 55
-      
 EOF
         echo "----------------------------"
         colorized_echo red "Using MySQL as database on port $db_port"
         echo "----------------------------"
         colorized_echo green "File generated at $APP_DIR/docker-compose.yml"
-
-        # Modify .env file
         colorized_echo blue "Fetching .env file"
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
-
-        # Comment out the SQLite line
         sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
-
-
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"$DATA_DIR/xray_config.json"~' "$APP_DIR/.env"
-
-
+        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
+        sed -i "s~^UVICORN_PORT = .*~UVICORN_PORT = $panel_port~" "$APP_DIR/.env"
         prompt_for_marzban_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
-        
-        echo "" >> "$ENV_FILE"
         echo "" >> "$ENV_FILE"
         echo "# Database configuration" >> "$ENV_FILE"
         echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$ENV_FILE"
         echo "MYSQL_DATABASE=marzban" >> "$ENV_FILE"
         echo "MYSQL_USER=marzban" >> "$ENV_FILE"
         echo "MYSQL_PASSWORD=$MYSQL_PASSWORD" >> "$ENV_FILE"
-        
         SQLALCHEMY_DATABASE_URL="mysql+pymysql://marzban:${MYSQL_PASSWORD}@127.0.0.1:${db_port}/marzban"
-        
         echo "" >> "$ENV_FILE"
         echo "# SQLAlchemy Database URL" >> "$ENV_FILE"
         echo "SQLALCHEMY_DATABASE_URL=\"$SQLALCHEMY_DATABASE_URL\"" >> "$ENV_FILE"
-
-        echo "UVICORN_PORT=$panel_port" >> "$ENV_FILE"
-        
         colorized_echo green "File saved in $APP_DIR/.env"
 
     else
@@ -927,8 +853,8 @@ EOF
         echo "----------------------------"
         colorized_echo blue "Fetching compose file"
         curl -sL "$FILES_URL_PREFIX/docker-compose.yml" -o "$docker_file_path"
-
-        # Install requested version
+        sed -i "s/marzban:/$APP_NAME:/g" "$docker_file_path"
+        sed -i "s|/var/lib/marzban|$DATA_DIR|g" "$docker_file_path"
         if [ "$marzban_version" == "latest" ]; then
             yq -i ".services.$APP_NAME.image = \"gozargah/marzban:latest\"" "$docker_file_path"
         else
@@ -937,17 +863,13 @@ EOF
         echo "Installing $marzban_version version"
         colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
 
-
         colorized_echo blue "Fetching .env file"
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
-
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
         sed -i 's/^# \(SQLALCHEMY_DATABASE_URL = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"$DATA_DIR/xray_config.json"~' "$APP_DIR/.env"
-        sed -i 's~\(SQLALCHEMY_DATABASE_URL = \).*~\1"sqlite:///$DATA_DIR/db.sqlite3"~' "$APP_DIR/.env"
-
-        echo "UVICORN_PORT=$panel_port" >> "$ENV_FILE"
-        
+        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
+        sed -i 's~\(SQLALCHEMY_DATABASE_URL = \).*~\1"sqlite:////var/lib/marzban/db.sqlite3"~' "$APP_DIR/.env"
+        sed -i "s~^UVICORN_PORT = .*~UVICORN_PORT = $panel_port~" "$APP_DIR/.env"
         colorized_echo green "File saved in $APP_DIR/.env"
     fi
     
@@ -955,20 +877,18 @@ EOF
     curl -sL "$FILES_URL_PREFIX/xray_config.json" -o "$DATA_DIR/xray_config.json"
     colorized_echo green "File saved in $DATA_DIR/xray_config.json"
     
-    colorized_echo green "Marzban's files downloaded successfully"
+    colorized_echo green "$APP_NAME files downloaded successfully"
 }
 
 up_marzban() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" up -d --remove-orphans
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" up -d --remove-orphans
 }
 
 follow_marzban_logs() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" logs -f
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" logs -f
 }
 
 status_command() {
-    
-    # Check if marzban is installed
     if ! is_marzban_installed; then
         echo -n "Status: "
         colorized_echo red "Not Installed"
@@ -986,10 +906,9 @@ status_command() {
     echo -n "Status: "
     colorized_echo green "Up"
     
-    json=$($COMPOSE -f $COMPOSE_FILE ps -a --format=json)
+    json=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps -a --format=json)
     services=$(echo "$json" | jq -r 'if type == "array" then .[] else . end | .Service')
     states=$(echo "$json" | jq -r 'if type == "array" then .[] else . end | .State')
-    # Print out the service names and statuses
     for i in $(seq 0 $(expr $(echo $services | wc -w) - 1)); do
         service=$(echo $services | cut -d' ' -f $(expr $i + 1))
         state=$(echo $states | cut -d' ' -f $(expr $i + 1))
@@ -1002,36 +921,28 @@ status_command() {
     done
 }
 
-
 prompt_for_marzban_password() {
     colorized_echo cyan "This password will be used to access the database and should be strong."
     colorized_echo cyan "If you do not enter a custom password, a secure 20-character password will be generated automatically."
-
-    # Запрашиваем ввод пароля
     read -p "Enter the password for the marzban user (or press Enter to generate a secure default password): " MYSQL_PASSWORD
-
-    # Генерация 20-значного пароля, если пользователь оставил поле пустым
     if [ -z "$MYSQL_PASSWORD" ]; then
         MYSQL_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
         colorized_echo green "A secure password has been generated automatically."
     fi
     colorized_echo green "This password will be recorded in the .env file for future use."
-
-    # Пауза 3 секунды перед продолжением
     sleep 3
 }
 
 install_command() {
     check_running_as_root
 
-    # Default values
     database_type="sqlite"
     marzban_version="latest"
     marzban_version_set="false"
     panel_port=8000
     db_port=3306
+    local custom_app_name=""
 
-    # Parse options
     while [[ $# -gt 0 ]]; do
         key="$1"
         case $key in
@@ -1057,12 +968,8 @@ install_command() {
                 marzban_version_set="true"
                 shift 2
             ;;
-            --app-name)
-                APP_NAME="$2"
-                APP_DIR="$INSTALL_DIR/$APP_NAME"
-                DATA_DIR="/var/lib/$APP_NAME"
-                COMPOSE_FILE="$APP_DIR/docker-compose.yml"
-                ENV_FILE="$APP_DIR/.env"
+            --name)
+                custom_app_name="$2"
                 shift 2
             ;;
             --panel-port)
@@ -1080,24 +987,28 @@ install_command() {
         esac
     done
 
-    # Prompt if not provided
-    if [ -z "$APP_NAME" ]; then
-        read -p "Enter APP_NAME (e.g., marzban for first, marzban2 for second): " APP_NAME
-        APP_DIR="$INSTALL_DIR/$APP_NAME"
-        DATA_DIR="/var/lib/$APP_NAME"
-        COMPOSE_FILE="$APP_DIR/docker-compose.yml"
-        ENV_FILE="$APP_DIR/.env"
+    if [ -z "$custom_app_name" ]; then
+        read -p "Enter APP_NAME (default: marzban): " custom_app_name
+        custom_app_name="${custom_app_name:-marzban}"
     fi
 
+    APP_NAME="$custom_app_name"
+    APP_DIR="$INSTALL_DIR/$APP_NAME"
+    DATA_DIR="/var/lib/$APP_NAME"
+    COMPOSE_FILE="$APP_DIR/docker-compose.yml"
+    ENV_FILE="$APP_DIR/.env"
+
     if is_marzban_installed; then
-        colorized_echo red "Marzban ($APP_NAME) is already installed at $APP_DIR"
+        colorized_echo red "$APP_NAME is already installed at $APP_DIR"
         read -p "Do you want to override the previous installation? (y/n) "
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             colorized_echo red "Aborted installation"
             exit 1
         fi
     fi
+
     detect_os
+
     if ! command -v jq >/dev/null 2>&1; then
         install_package jq
     fi
@@ -1111,26 +1022,22 @@ install_command() {
         install_yq
     fi
     detect_compose
-    install_marzban_script
-    # Function to check if a version exists in the GitHub releases
+    install_marzban_script "$APP_NAME"
+
     check_version_exists() {
         local version=$1
         repo_url="https://api.github.com/repos/Gozargah/Marzban/releases"
         if [ "$version" == "latest" ] || [ "$version" == "dev" ]; then
             return 0
         fi
-        
-        # Fetch the release data from GitHub API
         response=$(curl -s "$repo_url")
-        
-        # Check if the response contains the version tag
         if echo "$response" | jq -e ".[] | select(.tag_name == \"${version}\")" > /dev/null; then
             return 0
         else
             return 1
         fi
     }
-    # Check if the version is valid and exists
+
     if [[ "$marzban_version" == "latest" || "$marzban_version" == "dev" || "$marzban_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         if check_version_exists "$marzban_version"; then
             install_marzban "$marzban_version" "$database_type" "$panel_port" "$db_port"
@@ -1143,6 +1050,7 @@ install_command() {
         echo "Invalid version format. Please enter a valid version (e.g. v0.5.2)"
         exit 1
     fi
+
     up_marzban
     follow_marzban_logs
 }
@@ -1188,7 +1096,6 @@ install_yq() {
         }
     fi
 
-
     if command -v curl &>/dev/null; then
         if curl -L "$yq_url" -o /usr/local/bin/yq; then
             chmod +x /usr/local/bin/yq
@@ -1207,18 +1114,15 @@ install_yq() {
         fi
     fi
 
-
     if ! echo "$PATH" | grep -q "/usr/local/bin"; then
         export PATH="/usr/local/bin:$PATH"
     fi
-
 
     hash -r
 
     if command -v yq &>/dev/null; then
         colorized_echo green "yq is ready to use."
     elif [ -x "/usr/local/bin/yq" ]; then
-
         colorized_echo yellow "yq is installed at /usr/local/bin/yq but not found in PATH."
         colorized_echo yellow "You can add /usr/local/bin to your PATH environment variable."
     else
@@ -1227,28 +1131,20 @@ install_yq() {
     fi
 }
 
-
 down_marzban() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" down
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" down
 }
-
-
 
 show_marzban_logs() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" logs
-}
-
-follow_marzban_logs() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" logs -f
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" logs
 }
 
 marzban_cli() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" exec -e CLI_PROG_NAME="$APP_NAME cli" $APP_NAME marzban-cli "$@"
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" exec -e CLI_PROG_NAME="$APP_NAME cli" "$APP_NAME" marzban-cli "$@"
 }
 
-
 is_marzban_up() {
-    if [ -z "$($COMPOSE -f $COMPOSE_FILE ps -q -a)" ]; then
+    if [ -z "$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps -q 2>/dev/null)" ]; then
         return 1
     else
         return 0
@@ -1257,13 +1153,12 @@ is_marzban_up() {
 
 uninstall_command() {
     check_running_as_root
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
-    read -p "Do you really want to uninstall Marzban? (y/n) "
+    read -p "Do you really want to uninstall $APP_NAME? (y/n) "
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         colorized_echo red "Aborted"
         exit 1
@@ -1277,19 +1172,19 @@ uninstall_command() {
     uninstall_marzban
     uninstall_marzban_docker_images
     
-    read -p "Do you want to remove Marzban's data files too ($DATA_DIR)? (y/n) "
+    read -p "Do you want to remove $APP_NAME data files too ($DATA_DIR)? (y/n) "
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        colorized_echo green "Marzban uninstalled successfully"
+        colorized_echo green "$APP_NAME uninstalled successfully"
     else
         uninstall_marzban_data_files
-        colorized_echo green "Marzban uninstalled successfully"
+        colorized_echo green "$APP_NAME uninstalled successfully"
     fi
 }
 
 uninstall_marzban_script() {
-    if [ -f "/usr/local/bin/marzban" ]; then
-        colorized_echo yellow "Removing marzban script"
-        rm "/usr/local/bin/marzban"
+    if [ -f "/usr/local/bin/$APP_NAME" ]; then
+        colorized_echo yellow "Removing $APP_NAME script"
+        rm "/usr/local/bin/$APP_NAME"
     fi
 }
 
@@ -1302,7 +1197,6 @@ uninstall_marzban() {
 
 uninstall_marzban_docker_images() {
     images=$(docker images | grep marzban | awk '{print $3}')
-    
     if [ -n "$images" ]; then
         colorized_echo yellow "Removing Docker images of Marzban"
         for image in $images; do
@@ -1325,8 +1219,8 @@ restart_command() {
         colorized_echo red "Usage: $APP_NAME restart [options]"
         echo
         echo "OPTIONS:"
-        echo "  -h, --help        display this help message"
-        echo "  -n, --no-logs     do not follow logs after starting"
+        echo " -h, --help display this help message"
+        echo " -n, --no-logs do not follow logs after starting"
     }
     
     local no_logs=false
@@ -1348,9 +1242,8 @@ restart_command() {
         shift
     done
     
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
@@ -1361,15 +1254,16 @@ restart_command() {
     if [ "$no_logs" = false ]; then
         follow_marzban_logs
     fi
-    colorized_echo green "Marzban successfully restarted!"
+    colorized_echo green "$APP_NAME successfully restarted!"
 }
+
 logs_command() {
     help() {
         colorized_echo red "Usage: $APP_NAME logs [options]"
         echo ""
         echo "OPTIONS:"
-        echo "  -h, --help        display this help message"
-        echo "  -n, --no-follow   do not show follow logs"
+        echo " -h, --help display this help message"
+        echo " -n, --no-follow do not show follow logs"
     }
     
     local no_follow=false
@@ -1391,16 +1285,15 @@ logs_command() {
         shift
     done
     
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
     detect_compose
     
     if ! is_marzban_up; then
-        colorized_echo red "Marzban is not up."
+        colorized_echo red "$APP_NAME is not up."
         exit 1
     fi
     
@@ -1412,17 +1305,15 @@ logs_command() {
 }
 
 down_command() {
-    
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
     detect_compose
     
     if ! is_marzban_up; then
-        colorized_echo red "Marzban's already down"
+        colorized_echo red "$APP_NAME is already down"
         exit 1
     fi
     
@@ -1430,16 +1321,15 @@ down_command() {
 }
 
 cli_command() {
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
     detect_compose
     
     if ! is_marzban_up; then
-        colorized_echo red "Marzban is not up."
+        colorized_echo red "$APP_NAME is not up."
         exit 1
     fi
     
@@ -1451,8 +1341,8 @@ up_command() {
         colorized_echo red "Usage: $APP_NAME up [options]"
         echo ""
         echo "OPTIONS:"
-        echo "  -h, --help        display this help message"
-        echo "  -n, --no-logs     do not follow logs after starting"
+        echo " -h, --help display this help message"
+        echo " -n, --no-logs do not follow logs after starting"
     }
     
     local no_logs=false
@@ -1474,16 +1364,15 @@ up_command() {
         shift
     done
     
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
     detect_compose
     
     if is_marzban_up; then
-        colorized_echo red "Marzban's already up"
+        colorized_echo red "$APP_NAME is already up"
         exit 1
     fi
     
@@ -1495,9 +1384,8 @@ up_command() {
 
 update_command() {
     check_running_as_root
-    # Check if marzban is installed
     if ! is_marzban_installed; then
-        colorized_echo red "Marzban's not installed!"
+        colorized_echo red "$APP_NAME is not installed!"
         exit 1
     fi
     
@@ -1507,30 +1395,30 @@ update_command() {
     colorized_echo blue "Pulling latest version"
     update_marzban
     
-    colorized_echo blue "Restarting Marzban's services"
+    colorized_echo blue "Restarting $APP_NAME services"
     down_marzban
     up_marzban
     
-    colorized_echo blue "Marzban updated successfully"
+    colorized_echo blue "$APP_NAME updated successfully"
 }
 
 update_marzban_script() {
-    FETCH_REPO="Gozargah/Marzban-scripts"
-    SCRIPT_URL="https://github.com/$FETCH_REPO/raw/master/marzban.sh"
-    colorized_echo blue "Updating marzban script"
-    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/marzban
-    colorized_echo green "marzban script updated successfully"
+    colorized_echo blue "Updating $APP_NAME script"
+    local current_script=$(readlink -f "$0")
+    cp "$current_script" "/usr/local/bin/$APP_NAME"
+    chmod 755 "/usr/local/bin/$APP_NAME"
+    colorized_echo green "$APP_NAME script updated successfully"
 }
 
 update_marzban() {
-    $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" pull
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" pull
 }
 
 check_editor() {
     if [ -z "$EDITOR" ]; then
         if command -v nano >/dev/null 2>&1; then
             EDITOR="nano"
-            elif command -v vi >/dev/null 2>&1; then
+        elif command -v vi >/dev/null 2>&1; then
             EDITOR="vi"
         else
             detect_os
@@ -1539,7 +1427,6 @@ check_editor() {
         fi
     fi
 }
-
 
 edit_command() {
     detect_os
@@ -1566,35 +1453,32 @@ edit_env_command() {
 usage() {
     local script_name="${0##*/}"
     colorized_echo blue "=============================="
-    colorized_echo magenta "           $APP_NAME Help"
+    colorized_echo magenta " $APP_NAME Help"
     colorized_echo blue "=============================="
     colorized_echo cyan "Usage:"
-    echo "  ${script_name} [command]"
+    echo " ${script_name} [command]"
     echo
-
     colorized_echo cyan "Commands:"
-    colorized_echo yellow "  up              $(tput sgr0)– Start services"
-    colorized_echo yellow "  down            $(tput sgr0)– Stop services"
-    colorized_echo yellow "  restart         $(tput sgr0)– Restart services"
-    colorized_echo yellow "  status          $(tput sgr0)– Show status"
-    colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
-    colorized_echo yellow "  cli             $(tput sgr0)– Marzban CLI"
-    colorized_echo yellow "  install         $(tput sgr0)– Install Marzban"
-    colorized_echo yellow "  update          $(tput sgr0)– Update to latest version"
-    colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Marzban"
-    colorized_echo yellow "  install-script  $(tput sgr0)– Install Marzban script"
-    colorized_echo yellow "  backup          $(tput sgr0)– Manual backup launch"
-    colorized_echo yellow "  backup-service  $(tput sgr0)– Marzban Backupservice to backup to TG, and a new job in crontab"
-    colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
-    colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi editor)"
-    colorized_echo yellow "  edit-env        $(tput sgr0)– Edit environment file (via nano or vi editor)"
-    colorized_echo yellow "  help            $(tput sgr0)– Show this help message"
-    
-    
+    colorized_echo yellow " up             $(tput sgr0)– Start services"
+    colorized_echo yellow " down           $(tput sgr0)– Stop services"
+    colorized_echo yellow " restart        $(tput sgr0)– Restart services"
+    colorized_echo yellow " status         $(tput sgr0)– Show status"
+    colorized_echo yellow " logs           $(tput sgr0)– Show logs"
+    colorized_echo yellow " cli            $(tput sgr0)– $APP_NAME CLI"
+    colorized_echo yellow " install        $(tput sgr0)– Install $APP_NAME"
+    colorized_echo yellow " update         $(tput sgr0)– Update to latest version"
+    colorized_echo yellow " uninstall      $(tput sgr0)– Uninstall $APP_NAME"
+    colorized_echo yellow " install-script $(tput sgr0)– Install $APP_NAME script"
+    colorized_echo yellow " backup         $(tput sgr0)– Manual backup launch"
+    colorized_echo yellow " backup-service $(tput sgr0)– $APP_NAME Backupservice to backup to TG, and a new job in crontab"
+    colorized_echo yellow " core-update    $(tput sgr0)– Update/Change Xray core"
+    colorized_echo yellow " edit           $(tput sgr0)– Edit docker-compose.yml (via nano or vi editor)"
+    colorized_echo yellow " edit-env       $(tput sgr0)– Edit environment file (via nano or vi editor)"
+    colorized_echo yellow " help           $(tput sgr0)– Show this help message"
     echo
     colorized_echo cyan "Directories:"
-    colorized_echo magenta "  App directory: $APP_DIR"
-    colorized_echo magenta "  Data directory: $DATA_DIR"
+    colorized_echo magenta " App directory: $APP_DIR"
+    colorized_echo magenta " Data directory: $DATA_DIR"
     colorized_echo blue "================================"
     echo
 }
